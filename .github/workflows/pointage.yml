@@ -1,0 +1,59 @@
+name: Pointage des factures
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pointage-factures
+  cancel-in-progress: false
+
+jobs:
+  pointage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python et Tesseract OCR français/anglais
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng
+          tesseract --list-langs
+          python -m pip install --upgrade pip
+
+      - name: Installer les dépendances Python
+        run: pip install -r requirements.txt
+
+      - name: Télécharger l'archive privée depuis la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p /tmp/pointage-archive
+          gh release download factures-a-pointer --repo "$GH_REPO" --pattern "pointage-input.zip" --dir /tmp/pointage-archive
+          test -s /tmp/pointage-archive/pointage-input.zip
+
+      - name: Extraire et vérifier les données
+        run: |
+          unzip -q /tmp/pointage-archive/pointage-input.zip -d .
+          test -s input/P.MBS.xlsx
+          test -s input/P.DISTRIMAX.xlsx
+          test -d documents
+          find documents -type f | wc -l
+          echo "Vérification de la structure terminée."
+
+      - name: Lancer le pointage
+        run: python src/pointage.py --input input --documents documents --output output
+
+      - name: Publier les résultats comme artefact temporaire
+        if: always() && hashFiles('output/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultats-pointage
+          path: output/
+          if-no-files-found: warn
+          retention-days: 7
