@@ -1,0 +1,18 @@
+# Données comptables — ne jamais committer
+input/
+documents/
+output/
+*.xlsx
+*.xls
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.tif
+*.tiff
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
