@@ -242,6 +242,54 @@ def main():
             outpath = out / f"pointe_{filename}"
             wb.save(outpath)
             print(f"Classeur écrit : {outpath}", flush=True)
+    # Contrôle transversal : un même justificatif ne doit pas être affecté
+    # silencieusement à des références comptables distinctes.
+    report_path = out / "rapport_pointage.csv"
+    with report_path.open("r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        report_fields = reader.fieldnames
+        report_rows = list(reader)
+
+    groups = {}
+    for row in report_rows:
+        name = row.get("fichier_retenu", "").strip()
+        if name and row.get("statut") == "POINTE_A_CONTROLER":
+            groups.setdefault(name, []).append(row)
+
+    flagged = [rows for rows in groups.values()
+               if len({r.get("numero", "").strip() for r in rows
+                       if r.get("numero", "").strip()}) > 1]
+    affected = {}
+    for rows in flagged:
+        for row in rows:
+            row["statut"] = "DOUBLON_A_CONTROLER"
+            row["fichier_retenu"] = ""
+            reasons = [x for x in row.get("motifs", "").split(",") if x]
+            if "justificatif_reutilise" not in reasons:
+                reasons.append("justificatif_reutilise")
+            row["motifs"] = ",".join(reasons)
+            affected.setdefault(row["classeur"], set()).add(int(row["ligne_excel"]))
+
+    # Refléter les alertes dans les classeurs : laisser la cellule de pointage
+    # vide pour qu'une proposition réutilisée ne soit pas prise pour un pointage.
+    for filename, rownums in affected.items():
+        workbook_path = out / f"pointe_{filename}"
+        wb = openpyxl.load_workbook(workbook_path)
+        sheetname = TARGET_SHEETS[filename]
+        ws = wb[sheetname]
+        headers = [c.value for c in ws[1]]
+        checkbox_col = find_col(headers, ALIASES["file"])
+        for rownum in rownums:
+            ws.cell(rownum, checkbox_col + 1).value = ""
+        wb.save(workbook_path)
+        print(f"Doublons suspects à contrôler dans {filename} : {len(rownums)} ligne(s)", flush=True)
+
+    if flagged:
+        with report_path.open("w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=report_fields)
+            writer.writeheader()
+            writer.writerows(report_rows)
+
     print(f"Terminé. Documents indexés : {len(documents)}. Examiner le rapport avant validation.")
 
 if __name__ == "__main__":
