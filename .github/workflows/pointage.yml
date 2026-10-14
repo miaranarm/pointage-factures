@@ -51,9 +51,6 @@ jobs:
           with ZipFile(archive) as zf:
               members = zf.infolist()
               print(f"Entrées dans l'archive : {len(members)}", flush=True)
-              print("Premiers chemins de l'archive :", flush=True)
-              for member in members[:30]:
-                  print(repr(member.filename), flush=True)
               print("Tous les fichiers Excel de l'archive :", flush=True)
               for member in members:
                   if member.filename.lower().endswith((".xlsx", ".xls")):
@@ -61,12 +58,15 @@ jobs:
 
               for member in members:
                   parts = PurePosixPath(member.filename).parts
-                  start = next((i for i, part in enumerate(parts) if part in ("input", "documents")), None)
+                  start = next((i for i, part in enumerate(parts) if part in ("input", "inputs", "documents")), None)
                   if start is None:
                       continue
 
+                  relative_parts = list(parts[start:])
+                  if relative_parts[0] == "inputs":
+                      relative_parts[0] = "input"
+                  target = Path(*relative_parts)
                   selected += 1
-                  target = Path(*parts[start:])
                   if target.is_absolute() or ".." in target.parts:
                       raise RuntimeError(f"Chemin non autorisé dans l'archive : {member.filename}")
 
