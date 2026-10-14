@@ -54,6 +54,10 @@ jobs:
               print("Premiers chemins de l'archive :", flush=True)
               for member in members[:30]:
                   print(repr(member.filename), flush=True)
+              print("Tous les fichiers Excel de l'archive :", flush=True)
+              for member in members:
+                  if member.filename.lower().endswith((".xlsx", ".xls")):
+                      print(repr(member.filename), flush=True)
 
               for member in members:
                   parts = PurePosixPath(member.filename).parts
