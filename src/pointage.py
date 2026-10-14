@@ -8,7 +8,8 @@ Entrées attendues :
 Sorties dans output/. Aucun document n'est envoyé à un service externe.
 """
 from __future__ import annotations
-import argparse, csv, re, sys, unicodedata
+import argparse, csv, re, sys, unicodedata, os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
@@ -145,12 +146,20 @@ def main():
     paths = sorted(p for p in docs_dir.rglob("*") if p.is_file() and p.suffix.lower() in EXTS)
     if not paths:
         raise SystemExit(f"Aucun PDF/image trouvé dans {docs_dir}. Arrêt sans modifier les classeurs.")
+    # OCR en parallèle : les fichiers sont indépendants et Tesseract est lancé
+    # comme processus externe. Limiter à 4 tâches pour éviter de saturer le runner.
     documents = []
-    for i, path in enumerate(paths, 1):
-        text = get_text(path)
-        documents.append({"path": path, "name": path.name, "text": text,
-                          "norm": norm(text), "lines": text.splitlines()})
-        print(f"Indexation {i}/{len(paths)} : {path.name}", flush=True)
+    max_workers = min(4, max(1, os.cpu_count() or 2))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(get_text, path): path for path in paths}
+        for i, future in enumerate(as_completed(futures), 1):
+            path = futures[future]
+            text = future.result()
+            documents.append({"path": path, "name": path.name, "text": text,
+                              "norm": norm(text), "lines": text.splitlines()})
+            print(f"Indexation {i}/{len(paths)} : {path.name}", flush=True)
+    # L'ordre de traitement des tâches étant parallèle, rétablir un ordre stable.
+    documents.sort(key=lambda doc: str(doc["path"]).casefold())
     with (out / "rapport_pointage.csv").open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=["classeur","feuille","ligne_excel","numero","partenaire","date","total_ttc","statut","fichier_retenu","score","candidats","motifs"])
         writer.writeheader()
