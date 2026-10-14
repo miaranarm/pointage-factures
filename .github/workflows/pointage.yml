@@ -39,38 +39,17 @@ jobs:
 
       - name: Extraire et vérifier les données
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile
-          from shutil import copyfileobj
-
-          archive = Path("/tmp/pointage-archive/pointage-input.zip")
-          with ZipFile(archive) as zf:
-              members = zf.infolist()
-              prefix = "pointage-input/"
-              if not any(m.filename.startswith(prefix + "input/") for m in members):
-                  prefix = ""
-
-              for member in members:
-                  name = member.filename
-                  if prefix:
-                      if not name.startswith(prefix):
-                          continue
-                      name = name[len(prefix):]
-                  if not name:
-                      continue
-
-                  target = Path(name)
-                  if target.is_absolute() or ".." in target.parts:
-                      raise RuntimeError(f"Chemin non autorisé dans l'archive : {name}")
-
-                  if member.is_dir():
-                      target.mkdir(parents=True, exist_ok=True)
-                  else:
-                      target.parent.mkdir(parents=True, exist_ok=True)
-                      with zf.open(member) as src, target.open("wb") as dst:
-                          copyfileobj(src, dst)
-          PY
+          mkdir -p /tmp/pointage-extract
+          unzip -q /tmp/pointage-archive/pointage-input.zip -d /tmp/pointage-extract || unzip_status=$?
+          if [ "${unzip_status:-0}" -gt 1 ]; then
+            echo "Échec réel de l'extraction ZIP (code $unzip_status)."
+            exit "$unzip_status"
+          fi
+          if [ -d /tmp/pointage-extract/pointage-input ]; then
+            cp -a /tmp/pointage-extract/pointage-input/. .
+          else
+            cp -a /tmp/pointage-extract/. .
+          fi
           test -s input/P.MBS.xlsx
           test -s input/P.DISTRIMAX.xlsx
           test -d documents
