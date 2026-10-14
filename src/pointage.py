@@ -106,31 +106,49 @@ def token_hits(value, text_norm):
     return n in text_norm
 
 def score_row(fields, doc):
-    # Score explicable : identifiants d'abord, puis montants/date/partenaire.
+    # Score explicable : identifiants, date et montants avant la comparaison floue.
+    # Le filtrage lexical évite de lancer une comparaison coûteuse sur chaque paire
+    # ligne/document lorsque le partenaire n'a aucun mot en commun.
     t = doc["norm"]
     score, reasons = 0, []
     identifiers = [("numero", 45), ("reference", 24), ("reference_interne", 18)]
     for key, weight in identifiers:
         v = fields.get(key)
         if token_hits(v, t):
-            score += weight; reasons.append(key)
-    partner = norm(fields.get("partner"))
-    if len(partner) >= 5:
-        # Les noms longs peuvent être partiellement OCRisés : comparaison des séquences.
-        # Comparaison sur le texte normalisé complet : évite de recalculer la similarité sur chaque ligne pour chaque facture Excel.
-        best = fuzz.partial_ratio(partner, t) if len(t) >= 5 else 0
-        if best >= 90: score += 14; reasons.append("partenaire")
-        elif best >= 78: score += 7; reasons.append("partenaire_approximatif")
+            score += weight
+            reasons.append(key)
+
     d = parse_date(fields.get("date"))
     if d and re.search(rf"(?<!\d){d.day:02d}[./-]{d.month:02d}[./-]{d.year}(?!\d)", doc["text"]):
-        score += 8; reasons.append("date")
+        score += 8
+        reasons.append("date")
+
     for key, weight in (("ht", 12), ("tax", 8), ("ttc", 15)):
         val = amount(fields.get(key))
-        if val is None: continue
-        # Montants en formats français/international, avec ou sans séparateurs.
+        if val is None:
+            continue
         candidates = {norm(val), norm(f"{val:,.2f}"), norm(f"{val:.2f}")}
         if any(len(x) >= 4 and x in t for x in candidates):
-            score += weight; reasons.append(key)
+            score += weight
+            reasons.append(key)
+
+    partner = norm(fields.get("partner"))
+    if len(partner) >= 5:
+        raw_partner = str(fields.get("partner") or "")
+        partner_tokens = {norm(tok) for tok in re.findall(r"\\w+", raw_partner, flags=re.UNICODE)
+                          if len(norm(tok)) >= 3}
+        doc_tokens = doc.get("tokens", set())
+        # Si un identifiant/date/montant apporte déjà une preuve, on conserve
+        # aussi le contrôle flou même si l'OCR a déformé le nom du partenaire.
+        lexical_candidate = bool(partner_tokens & doc_tokens) or score >= 20
+        if lexical_candidate:
+            best = 100 if partner in t else (fuzz.partial_ratio(partner, t) if len(t) >= 5 else 0)
+            if best >= 90:
+                score += 14
+                reasons.append("partenaire")
+            elif best >= 78:
+                score += 7
+                reasons.append("partenaire_approximatif")
     return min(score, 100), reasons
 
 def main():
@@ -156,7 +174,9 @@ def main():
             path = futures[future]
             text = future.result()
             documents.append({"path": path, "name": path.name, "text": text,
-                              "norm": norm(text), "lines": text.splitlines()})
+                              "norm": norm(text), "lines": text.splitlines(),
+                              "tokens": {norm(tok) for tok in re.findall(r"\\w+", text, flags=re.UNICODE)
+                                         if len(norm(tok)) >= 3}})
             print(f"Indexation {i}/{len(paths)} : {path.name}", flush=True)
     # L'ordre de traitement des tâches étant parallèle, rétablir un ordre stable.
     documents.sort(key=lambda doc: str(doc["path"]).casefold())
