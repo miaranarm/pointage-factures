@@ -40,29 +40,31 @@ jobs:
       - name: Extraire et vérifier les données
         run: |
           python - <<'PY'
-          from pathlib import Path
+          from pathlib import Path, PurePosixPath
           from zipfile import ZipFile
           from shutil import copyfileobj
 
           archive = Path("/tmp/pointage-archive/pointage-input.zip")
+          extracted = 0
+          selected = 0
+
           with ZipFile(archive) as zf:
               members = zf.infolist()
-              prefix = "pointage-input/"
-              if not any(m.filename.startswith(prefix + "input/") for m in members):
-                  prefix = ""
+              print(f"Entrées dans l'archive : {len(members)}", flush=True)
+              print("Premiers chemins de l'archive :", flush=True)
+              for member in members[:30]:
+                  print(repr(member.filename), flush=True)
 
               for member in members:
-                  name = member.filename
-                  if prefix:
-                      if not name.startswith(prefix):
-                          continue
-                      name = name[len(prefix):]
-                  if not name:
+                  parts = PurePosixPath(member.filename).parts
+                  start = next((i for i, part in enumerate(parts) if part in ("input", "documents")), None)
+                  if start is None:
                       continue
 
-                  target = Path(name)
+                  selected += 1
+                  target = Path(*parts[start:])
                   if target.is_absolute() or ".." in target.parts:
-                      raise RuntimeError(f"Chemin non autorisé dans l'archive : {name}")
+                      raise RuntimeError(f"Chemin non autorisé dans l'archive : {member.filename}")
 
                   if member.is_dir():
                       target.mkdir(parents=True, exist_ok=True)
@@ -70,13 +72,24 @@ jobs:
                       target.parent.mkdir(parents=True, exist_ok=True)
                       with zf.open(member) as src, target.open("wb") as dst:
                           copyfileobj(src, dst)
+                      extracted += 1
+
+          print(f"Entrées retenues : {selected}; fichiers extraits : {extracted}", flush=True)
+          print("Fichiers présents dans input :", [p.name for p in Path("input").glob("*")] if Path("input").exists() else "DOSSIER ABSENT", flush=True)
+          test_mbs = Path("input/P.MBS.xlsx")
+          test_dist = Path("input/P.DISTRIMAX.xlsx")
+          if not test_mbs.is_file() or test_mbs.stat().st_size == 0:
+              raise SystemExit(f"Fichier manquant ou vide : {test_mbs}")
+          if not test_dist.is_file() or test_dist.stat().st_size == 0:
+              raise SystemExit(f"Fichier manquant ou vide : {test_dist}")
+          if not Path("documents").is_dir():
+              raise SystemExit("Dossier documents absent")
+          document_count = sum(1 for p in Path("documents").rglob("*") if p.is_file())
+          print(f"Nombre de documents : {document_count}", flush=True)
+          if document_count == 0:
+              raise SystemExit("Aucun document trouvé dans documents/")
+          print("Vérification de la structure terminée.", flush=True)
           PY
-          test -s input/P.MBS.xlsx
-          test -s input/P.DISTRIMAX.xlsx
-          test -d documents
-          echo "Nombre de documents :"
-          find documents -type f | wc -l
-          echo "Vérification de la structure terminée."
 
       - name: Lancer le pointage
         run: python src/pointage.py --input input --documents documents --output output
