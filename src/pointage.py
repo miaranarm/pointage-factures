@@ -116,7 +116,8 @@ def score_row(fields, doc):
     partner = norm(fields.get("partner"))
     if len(partner) >= 5:
         # Les noms longs peuvent être partiellement OCRisés : comparaison des séquences.
-        best = max((fuzz.partial_ratio(partner, norm(chunk)) for chunk in doc["lines"] if len(norm(chunk)) >= 5), default=0)
+        # Comparaison sur le texte normalisé complet : évite de recalculer la similarité sur chaque ligne pour chaque facture Excel.
+        best = fuzz.partial_ratio(partner, t) if len(t) >= 5 else 0
         if best >= 90: score += 14; reasons.append("partenaire")
         elif best >= 78: score += 7; reasons.append("partenaire_approximatif")
     d = parse_date(fields.get("date"))
